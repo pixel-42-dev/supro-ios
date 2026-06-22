@@ -1,0 +1,23 @@
+{
+  "appId": "ru.inko.supro",
+  "appName": "Supro",
+  "webDir": "www",
+  "server": {
+    "url": "https://xn--n1abdck.xn--p1ai/",
+    "androidScheme": "https",
+    "allowNavigation": ["xn--n1abdck.xn--p1ai", "*.xn--n1abdck.xn--p1ai"]
+  },
+  "plugins": {
+    "EdgeToEdge": {
+      "statusBarColor": "#5d5fef",
+      "navigationBarColor": "#5d5fef",
+      "backgroundColor": "#5d5fef"
+    },
+    "StatusBar": {
+      "style": "DARK"
+    },
+    "SystemBars": {
+      "insetsHandling": "disable"
+    }
+  }
+}

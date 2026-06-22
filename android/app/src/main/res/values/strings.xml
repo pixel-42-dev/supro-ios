@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Supro</string>
+    <string name="title_activity_main">Supro</string>
+    <string name="package_name">ru.inko.supro</string>
+    <string name="custom_url_scheme">ru.inko.supro</string>
+</resources>

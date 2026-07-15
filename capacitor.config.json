@@ -31,6 +31,11 @@
     },
     "SystemBars": {
       "insetsHandling": "disable"
+    },
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 0,
+      "backgroundColor": "#5d5fef"
     }
   }
 }

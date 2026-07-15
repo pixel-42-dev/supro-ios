@@ -1,12 +1,14 @@
 package ru.inko.supro;
 
 import android.app.Dialog;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.os.Bundle;
 import android.os.Message;
 import android.view.Gravity;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
@@ -14,6 +16,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
+
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
@@ -104,14 +108,48 @@ public class MainActivity extends BridgeActivity {
                 popup.setWebViewClient(new WebViewClient() {
                     @Override
                     public boolean shouldOverrideUrlLoading(WebView v, android.webkit.WebResourceRequest request) {
+                        String url = request.getUrl().toString();
+                        String scheme = request.getUrl().getScheme();
+
+                        // intent:// и другие не-http схемы — открываем соответствующее приложение
+                        if (scheme != null && !scheme.equals("http") && !scheme.equals("https")) {
+                            try {
+                                Intent intent;
+                                if (scheme.equals("intent")) {
+                                    intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                                } else {
+                                    // vk://, market:// и прочие прямые схемы
+                                    intent = new Intent(Intent.ACTION_VIEW, request.getUrl());
+                                }
+                                intent.addCategory(Intent.CATEGORY_BROWSABLE);
+                                startActivity(intent);
+                                return true;
+                            } catch (Exception e) {
+                                // Приложение не установлено — пробуем fallback-URL из intent-ссылки
+                                if (scheme.equals("intent")) {
+                                    try {
+                                        Intent parsed = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                                        String fallback = parsed.getStringExtra("browser_fallback_url");
+                                        if (fallback != null) {
+                                            v.loadUrl(fallback);
+                                            return true;
+                                        }
+                                    } catch (Exception ignored) {}
+                                }
+                                return true; // глотаем, чтобы не показывать ERR_UNKNOWN_URL_SCHEME
+                            }
+                        }
+
                         // Возврат на наш сайт после авторизации
                         if (request.getUrl().getHost() != null
                                 && request.getUrl().getHost().endsWith("xn--n1abdck.xn--p1ai")) {
                             if (dialog.isShowing()) {
+                                // postMessage не сработал — переносим URL с кодом в основное окно
                                 CookieManager.getInstance().flush();
                                 getBridge().getWebView().loadUrl(request.getUrl().toString());
                                 dialog.dismiss();
                             }
+                            // Если диалог уже закрыт — логин обработан через postMessage
                             return true;
                         }
                         return false;
@@ -142,8 +180,20 @@ public class MainActivity extends BridgeActivity {
             }
         });
 
-        // Если сигнал о загрузке так и не пришёл (плохая сеть и т.п.), убираем оверлей через 15 секунд, чтобы он не висел вечно
+        // Если сигнал о загрузке так и не пришёл, убираем оверлей через 15 секунд, чтобы он не висел вечно
         webView.postDelayed(this::hideLoadingOverlay, 15000);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            Window window = getWindow();
+            WindowInsetsControllerCompat controller =
+                    new WindowInsetsControllerCompat(window, window.getDecorView());
+            controller.setAppearanceLightStatusBars(false);
+            controller.setAppearanceLightNavigationBars(false);
+        }
     }
 
     private void hideLoadingOverlay() {

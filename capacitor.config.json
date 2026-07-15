@@ -22,14 +22,11 @@
   },
   "plugins": {
     "EdgeToEdge": {
-      "statusBarColor": "#5d5fef",
-      "navigationBarColor": "#5d5fef",
-      "backgroundColor": "#5d5fef"
+      "statusBarColor": "#000000",
+      "navigationBarColor": "#000000",
+      "backgroundColor": "#000000"
     },
-    "StatusBar": {
-      "style": "DARK"
-    },
-    "SystemBars": {
+    "SystemBars": { 
       "insetsHandling": "disable"
     },
     "SplashScreen": {

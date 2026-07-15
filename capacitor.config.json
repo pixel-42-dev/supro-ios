@@ -5,7 +5,20 @@
   "server": {
     "url": "https://xn--n1abdck.xn--p1ai/",
     "androidScheme": "https",
-    "allowNavigation": ["xn--n1abdck.xn--p1ai", "*.xn--n1abdck.xn--p1ai"]
+    "allowNavigation": [
+      "xn--n1abdck.xn--p1ai", 
+      "*.xn--n1abdck.xn--p1ai",
+      "oauth.vk.com",
+      "id.vk.com",
+      "login.vk.com",
+      "vk.com",
+      "*.vk.com",
+      "oauth.vk.ru",
+      "id.vk.ru",
+      "login.vk.ru",
+      "vk.ru",
+      "*.vk.ru"
+    ]
   },
   "plugins": {
     "EdgeToEdge": {

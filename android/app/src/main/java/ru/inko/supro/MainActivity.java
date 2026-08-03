@@ -68,6 +68,7 @@ public class MainActivity extends BridgeActivity {
                             } else {
                                 view.evaluateJavascript(
                                         "window.addEventListener('load', function(){" +
+                                                "  console.log('__SUPRO_PAGE_READY__');" +
                                                 "}, { once: true });", null);
                             }
                         });
@@ -182,6 +183,13 @@ public class MainActivity extends BridgeActivity {
 
         // Если сигнал о загрузке так и не пришёл, убираем оверлей через 15 секунд, чтобы он не висел вечно
         webView.postDelayed(this::hideLoadingOverlay, 15000);
+
+        android.view.View content = findViewById(android.R.id.content);
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
+            int ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom;
+            v.setPadding(0, 0, 0, ime);
+            return insets;
+        });
     }
 
     @Override

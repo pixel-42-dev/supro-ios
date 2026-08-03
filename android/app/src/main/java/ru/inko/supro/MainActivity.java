@@ -3,7 +3,6 @@ package ru.inko.supro;
 import android.app.Dialog;
 import android.content.Intent;
 import android.graphics.Color;
-import android.graphics.PorterDuff;
 import android.os.Bundle;
 import android.os.Message;
 import android.view.Gravity;
@@ -15,10 +14,11 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
-import android.widget.ProgressBar;
+import android.widget.ImageView;
 
 import androidx.core.view.WindowInsetsControllerCompat;
 
+import com.bumptech.glide.Glide;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
 import com.getcapacitor.BridgeWebViewClient;
@@ -40,15 +40,18 @@ public class MainActivity extends BridgeActivity {
         cookieManager.setAcceptThirdPartyCookies(webView, true);
 
         loadingOverlay = new FrameLayout(this);
-        loadingOverlay.setBackgroundColor(Color.parseColor("#5d5fef"));
+        loadingOverlay.setBackgroundColor(Color.parseColor("#f6f6f6"));
         loadingOverlay.setClickable(true); // блокируем клики по недогруженной странице
 
-        ProgressBar spinner = new ProgressBar(this);
-        spinner.getIndeterminateDrawable().setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN);
-        FrameLayout.LayoutParams spinnerParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        spinnerParams.gravity = Gravity.CENTER;
-        loadingOverlay.addView(spinner, spinnerParams);
+        ImageView loadingGif = new ImageView(this);
+        int gifSizePx = (int) (120 * getResources().getDisplayMetrics().density); // 120dp
+        FrameLayout.LayoutParams gifParams = new FrameLayout.LayoutParams(gifSizePx, gifSizePx);
+        gifParams.gravity = Gravity.CENTER;
+        loadingOverlay.addView(loadingGif, gifParams);
+        Glide.with(this)
+                .asGif()
+                .load(R.raw.loading)
+                .into(loadingGif);
 
         ((ViewGroup) webView.getParent()).addView(loadingOverlay,
                 new ViewGroup.LayoutParams(
@@ -95,7 +98,6 @@ public class MainActivity extends BridgeActivity {
                 popup.getSettings().setDomStorageEnabled(true);
                 popup.getSettings().setJavaScriptCanOpenWindowsAutomatically(true);
 
-                // Убираем маркер WebView из User-Agent, чтобы ВК видел "обычный браузер"
                 String ua = popup.getSettings().getUserAgentString().replace("; wv", "");
                 popup.getSettings().setUserAgentString(ua);
 
@@ -112,21 +114,18 @@ public class MainActivity extends BridgeActivity {
                         String url = request.getUrl().toString();
                         String scheme = request.getUrl().getScheme();
 
-                        // intent:// и другие не-http схемы — открываем соответствующее приложение
                         if (scheme != null && !scheme.equals("http") && !scheme.equals("https")) {
                             try {
                                 Intent intent;
                                 if (scheme.equals("intent")) {
                                     intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
                                 } else {
-                                    // vk://, market:// и прочие прямые схемы
                                     intent = new Intent(Intent.ACTION_VIEW, request.getUrl());
                                 }
                                 intent.addCategory(Intent.CATEGORY_BROWSABLE);
                                 startActivity(intent);
                                 return true;
                             } catch (Exception e) {
-                                // Приложение не установлено — пробуем fallback-URL из intent-ссылки
                                 if (scheme.equals("intent")) {
                                     try {
                                         Intent parsed = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
@@ -137,20 +136,17 @@ public class MainActivity extends BridgeActivity {
                                         }
                                     } catch (Exception ignored) {}
                                 }
-                                return true; // глотаем, чтобы не показывать ERR_UNKNOWN_URL_SCHEME
+                                return true;
                             }
                         }
 
-                        // Возврат на наш сайт после авторизации
                         if (request.getUrl().getHost() != null
                                 && request.getUrl().getHost().endsWith("xn--n1abdck.xn--p1ai")) {
                             if (dialog.isShowing()) {
-                                // postMessage не сработал — переносим URL с кодом в основное окно
                                 CookieManager.getInstance().flush();
                                 getBridge().getWebView().loadUrl(request.getUrl().toString());
                                 dialog.dismiss();
                             }
-                            // Если диалог уже закрыт — логин обработан через postMessage
                             return true;
                         }
                         return false;
@@ -181,7 +177,6 @@ public class MainActivity extends BridgeActivity {
             }
         });
 
-        // Если сигнал о загрузке так и не пришёл, убираем оверлей через 15 секунд, чтобы он не висел вечно
         webView.postDelayed(this::hideLoadingOverlay, 15000);
 
         android.view.View content = findViewById(android.R.id.content);

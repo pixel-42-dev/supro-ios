@@ -78,6 +78,9 @@ public class MainActivity extends BridgeActivity {
             }
         });
 
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) ->
+                openExternally(url, userAgent, contentDisposition, mimetype));
+
         webView.setWebChromeClient(new BridgeWebChromeClient(getBridge()) {
 
             @Override
@@ -185,6 +188,20 @@ public class MainActivity extends BridgeActivity {
             v.setPadding(0, 0, 0, ime);
             return insets;
         });
+
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                WebView wv = getBridge().getWebView();
+                if (wv != null && wv.canGoBack()) {
+                    wv.goBack();
+                } else {
+                    // Внутри WebView идти некуда — отдаём управление системе
+                    setEnabled(false);
+                    getOnBackPressedDispatcher().onBackPressed();
+                }
+            }
+        });
     }
 
     @Override
@@ -208,5 +225,55 @@ public class MainActivity extends BridgeActivity {
                     ViewGroup parent = (ViewGroup) overlay.getParent();
                     if (parent != null) parent.removeView(overlay);
                 });
+    }
+
+    private void openExternally(String url, String userAgent, String contentDisposition, String mimeType) {
+        try {
+            android.app.DownloadManager.Request request =
+                    new android.app.DownloadManager.Request(android.net.Uri.parse(url));
+            request.setNotificationVisibility(
+                    android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.allowScanningByMediaScanner();
+
+            // Куки сессии — иначе сервер отдаст страницу логина вместо файла
+            String cookies = CookieManager.getInstance().getCookie(url);
+            if (cookies != null) {
+                request.addRequestHeader("Cookie", cookies);
+            }
+            if (userAgent != null) {
+                request.addRequestHeader("User-Agent", userAgent);
+            }
+
+            // Имя файла: парсим filename из Content-Disposition сами, т.к. URLUtil.guessFileName
+            // игнорирует заголовки с "inline" (а сервер отдаёт именно такие)
+            String fileName = null;
+
+            if (contentDisposition != null) {
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("filename\\*?=(?:UTF-8''|\")?([^\";]+)")
+                        .matcher(contentDisposition);
+                if (m.find()) {
+                    fileName = android.net.Uri.decode(m.group(1).trim());
+                }
+            }
+
+            // Не нашли — стандартный способ как запасной вариант
+            if (fileName == null || fileName.isEmpty()) {
+                fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType);
+            }
+
+            request.setDestinationInExternalPublicDir(
+                    android.os.Environment.DIRECTORY_DOWNLOADS, fileName);
+
+            android.app.DownloadManager dm =
+                    (android.app.DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            dm.enqueue(request);
+        } catch (Exception e) {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setData(android.net.Uri.parse(url));
+            try {
+                startActivity(intent);
+            } catch (android.content.ActivityNotFoundException ignored) {}
+        }
     }
 }

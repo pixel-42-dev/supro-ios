@@ -3,7 +3,7 @@
   "appName": "Supro",
   "webDir": "www",
   "server": {
-    "url": "https://xn--n1abdck.xn--p1ai/",
+    "url": "https://xn--n1abdck.xn--p1ai/index/view/",
     "androidScheme": "https",
     "allowNavigation": [
       "xn--n1abdck.xn--p1ai", 

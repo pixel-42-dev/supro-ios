@@ -48,7 +48,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class MainActivity extends BridgeActivity {
 
@@ -124,6 +126,13 @@ public class MainActivity extends BridgeActivity {
     private String lastMenuKey = null;
     private final List<View> drawerItemRows = new ArrayList<>();
     private final List<String> drawerItemHrefs = new ArrayList<>();
+    private final List<String> drawerItemNames = new ArrayList<>();
+
+    // Раздел, выбранный в меню: страницы, на которые сайт перенаправил после нажатия,
+    // относим к нему. Сбрасывается, когда пользователь сам переходит по ссылке или жмёт «Назад»
+    private String stickySectionHref = null;
+    // Адреса страниц, уже привязанных к разделам меню
+    private final Map<String, String> sectionAliases = new HashMap<>();
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -163,6 +172,15 @@ public class MainActivity extends BridgeActivity {
         createErrorOverlay((ViewGroup) webView.getParent());
 
         webView.setWebViewClient(new BridgeWebViewClient(getBridge()) {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                // Пользователь сам перешёл по ссылке на странице — выходим из «режима раздела»
+                if (request.isForMainFrame() && request.hasGesture() && !request.isRedirect()) {
+                    stickySectionHref = null;
+                }
+                return super.shouldOverrideUrlLoading(view, request);
+            }
+
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
@@ -372,6 +390,7 @@ public class MainActivity extends BridgeActivity {
                 }
                 WebView wv = getBridge().getWebView();
                 if (wv != null && wv.canGoBack()) {
+                    stickySectionHref = null;
                     wv.goBack();
                 } else {
                     setEnabled(false);
@@ -549,6 +568,7 @@ public class MainActivity extends BridgeActivity {
 
         drawerPanel.addView(createDrawerRow("Настройка профиля", null, v -> {
             drawerLayout.closeDrawer(GravityCompat.START);
+            stickySectionHref = null;
             getBridge().getWebView().loadUrl(SITE_URL + "/profile/edit/");
         }));
         drawerPanel.addView(createDrawerRow("Выйти из аккаунта", null, v -> {
@@ -617,13 +637,8 @@ public class MainActivity extends BridgeActivity {
         if (json == null || "null".equals(json) || toolbarTitle == null) return;
         try {
             JSONObject info = new JSONObject(json);
-
-            String title = info.optString("title", "").trim();
-            if (!title.isEmpty()) {
-                toolbarTitle.setText(title);
-            } else if (fullUpdate) {
-                toolbarTitle.setText("Супро");
-            }
+            String pageTitle = info.optString("title", "").trim();
+            boolean needRetry = false;
 
             if (fullUpdate) {
                 JSONArray items = info.optJSONArray("items");
@@ -643,16 +658,42 @@ public class MainActivity extends BridgeActivity {
                 } else if (isAuthPage) {
                     // Страница входа/выхода: меню недоступно, запомненное меню забываем
                     lastMenuKey = null;
+                    stickySectionHref = null;
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                             .remove(PREF_DRAWER_MENU).apply();
                     setMenuAvailable(false);
-                } else if (allowRetry) {
-                    // Меню на странице не нашлось — возможно, сайт дорисовывает его позже
-                    WebView wv = getBridge().getWebView();
-                    wv.postDelayed(() -> wv.evaluateJavascript(READ_PAGE_INFO_JS,
-                            value -> applyPageInfo(value, currentUrl, true, false)), 1500);
+                } else {
+                    // Меню на странице не нашлось — возможно, сайт дорисует его позже
+                    needRetry = true;
                 }
-                // Иначе оставляем меню, полученное с предыдущих страниц
+            }
+
+            // Страница открыта из меню, но сайт перенаправил на другой адрес —
+            // запоминаем, что она относится к выбранному разделу
+            if (stickySectionHref != null && currentUrl != null
+                    && findCurrentItemIndex(currentUrl) < 0) {
+                sectionAliases.put(currentUrl, stickySectionHref);
+            }
+
+            // Заголовок: для разделов из меню — название пункта меню,
+            // для остальных страниц — название, которое показывает сайт
+            int index = findCurrentItemIndex(currentUrl);
+            if (index >= 0) {
+                toolbarTitle.setText(drawerItemNames.get(index));
+            } else if (!pageTitle.isEmpty()) {
+                toolbarTitle.setText(pageTitle);
+            } else if (fullUpdate) {
+                if (allowRetry) {
+                    needRetry = true; // сайт мог ещё не дорисовать название
+                } else {
+                    toolbarTitle.setText("Супро");
+                }
+            }
+
+            if (fullUpdate && needRetry && allowRetry) {
+                WebView wv = getBridge().getWebView();
+                wv.postDelayed(() -> wv.evaluateJavascript(READ_PAGE_INFO_JS,
+                        value -> applyPageInfo(value, currentUrl, true, false)), 1000);
             }
 
             highlightCurrentItem(currentUrl);
@@ -671,11 +712,12 @@ public class MainActivity extends BridgeActivity {
         drawerItemsContainer.removeAllViews();
         drawerItemRows.clear();
         drawerItemHrefs.clear();
+        drawerItemNames.clear();
 
         for (int i = 0; i < items.length(); i++) {
             JSONObject item = items.optJSONObject(i);
             if (item == null) continue;
-            String text = item.optString("text", "");
+            final String text = item.optString("text", "");
 
             if ("title".equals(item.optString("type"))) {
                 TextView section = new TextView(this);
@@ -689,12 +731,16 @@ public class MainActivity extends BridgeActivity {
                 View row = createDrawerRow(text, item.optString("icon", ""), v -> {
                     drawerLayout.closeDrawer(GravityCompat.START);
                     if (!href.isEmpty()) {
+                        // Запоминаем выбранный раздел и сразу показываем его название
+                        stickySectionHref = href;
+                        toolbarTitle.setText(text);
                         getBridge().getWebView().loadUrl(href);
                     }
                 });
                 drawerItemsContainer.addView(row);
                 drawerItemRows.add(row);
                 drawerItemHrefs.add(href);
+                drawerItemNames.add(text);
             }
         }
     }
@@ -734,22 +780,35 @@ public class MainActivity extends BridgeActivity {
         return row;
     }
 
-    /** Подсвечивает в меню раздел, который сейчас открыт */
-    private void highlightCurrentItem(String currentUrl) {
+    /** Находит в меню пункт, соответствующий открытой странице (или -1) */
+    private int findCurrentItemIndex(String currentUrl) {
+        if (currentUrl == null) return -1;
+
+        // Страница, на которую раздел меню уже перенаправлял раньше
+        String aliasHref = sectionAliases.get(currentUrl);
+        if (aliasHref != null) {
+            int aliasIndex = drawerItemHrefs.indexOf(aliasHref);
+            if (aliasIndex >= 0) return aliasIndex;
+        }
+
+        // Страница относится к пункту, если её адрес начинается с адреса пункта
+        // (с учётом параметров вроде ?company=1). Берём самое точное совпадение
         int best = -1;
         int bestLen = 0;
-        if (currentUrl != null) {
-            for (int i = 0; i < drawerItemHrefs.size(); i++) {
-                String href = drawerItemHrefs.get(i);
-                if (href.isEmpty()) continue;
-                String base = href.split("\\?")[0];
-                boolean match = currentUrl.equals(href) || currentUrl.startsWith(base);
-                if (match && base.length() > bestLen) {
-                    best = i;
-                    bestLen = base.length();
-                }
+        for (int i = 0; i < drawerItemHrefs.size(); i++) {
+            String href = drawerItemHrefs.get(i);
+            if (href.isEmpty()) continue;
+            if (currentUrl.startsWith(href) && href.length() > bestLen) {
+                best = i;
+                bestLen = href.length();
             }
         }
+        return best;
+    }
+
+    /** Подсвечивает в меню раздел, который сейчас открыт */
+    private void highlightCurrentItem(String currentUrl) {
+        int best = findCurrentItemIndex(currentUrl);
         for (int i = 0; i < drawerItemRows.size(); i++) {
             drawerItemRows.get(i).setBackgroundColor(i == best ? COLOR_DRAWER_SELECTED : Color.TRANSPARENT);
         }
@@ -758,8 +817,11 @@ public class MainActivity extends BridgeActivity {
     private void confirmLogout() {
         new AlertDialog.Builder(this)
                 .setTitle("Выйти из аккаунта?")
-                .setPositiveButton("Выйти", (dialogInterface, which) ->
-                        getBridge().getWebView().loadUrl(SITE_URL + "/auth/logout/"))
+                .setPositiveButton("Выйти", (dialogInterface, which) -> {
+                    stickySectionHref = null;
+                    sectionAliases.clear();
+                    getBridge().getWebView().loadUrl(SITE_URL + "/auth/logout/");
+                })
                 .setNegativeButton("Отмена", null)
                 .show();
     }
@@ -919,8 +981,8 @@ public class MainActivity extends BridgeActivity {
                     }
                     conn.connect();
 
-                    java.util.Map<String, java.util.List<String>> headers = conn.getHeaderFields();
-                    for (java.util.Map.Entry<String, java.util.List<String>> header : headers.entrySet()) {
+                    Map<String, List<String>> headers = conn.getHeaderFields();
+                    for (Map.Entry<String, List<String>> header : headers.entrySet()) {
                         if (header.getKey() != null && header.getKey().equalsIgnoreCase("Set-Cookie")) {
                             for (String cookie : header.getValue()) {
                                 cookieStore.setCookie(currentUrl, cookie);

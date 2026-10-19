@@ -65,17 +65,44 @@ public class MainActivity extends BridgeActivity {
     private static final int COLOR_DRAWER_SECTION = 0xFF9A9CB8;
     private static final int COLOR_DRAWER_SELECTED = 0x33FFFFFF;
 
-    // Прячет элементы сайта, которые дублирует нативная оболочка
+    // CSS, которым прячем элементы сайта, дублирующие нативную оболочку.
+    // Шапку сайта прячем, пока у страницы нет класса supro-site-nav (его ставим, если меню не прочиталось)
+    private static final String SITE_CHROME_CSS =
+            ".landing-header, #navbar-sub-menu, .footer__columns, .footer__policy { display: none !important; }" +
+                    " html:not(.supro-site-nav) .pageHeader .header__wrapper { display: none !important; }" +
+                    " html:not(.supro-site-nav) header.pageHeader { padding: 0 !important; }";
+
+    // Вставляется в момент создания страницы, до первой отрисовки — шапка не появляется ни на кадр
+    private static final String EARLY_HIDE_JS =
+            "(function(){" +
+                    "if (document.getElementById('supro-app-style')) return;" +
+                    "var s = document.createElement('style');" +
+                    "s.id = 'supro-app-style';" +
+                    "s.textContent = '" + SITE_CHROME_CSS + "';" +
+                    "var add = function(){ var root = document.head || document.documentElement;" +
+                    "  if (!root) return false; root.appendChild(s); return true; };" +
+                    "if (!add()) { new MutationObserver(function(m, o){ if (add()) { o.disconnect(); } })" +
+                    "  .observe(document, {childList: true, subtree: true}); }" +
+                    "})();";
+
+    // Запасной путь (старый WebView) + пересчёт раскладки сайта при изменении размера шапки
     private static final String HIDE_SITE_CHROME_JS =
             "(function(){" +
                     "if (!document.getElementById('supro-app-style')) {" +
                     "  var s = document.createElement('style');" +
                     "  s.id = 'supro-app-style';" +
-                    "  s.textContent = '.pageHeader .header__wrapper, .landing-header, #navbar-sub-menu," +
-                    " .footer__columns, .footer__policy { display: none !important; }';" +
+                    "  s.textContent = '" + SITE_CHROME_CSS + "';" +
                     "  (document.head || document.documentElement).appendChild(s);" +
                     "}" +
-                    "if (window.jQuery) { setTimeout(function(){ jQuery(window).trigger('resize'); }, 50); }" +
+                    "var relayout = function(){ if (window.jQuery) { jQuery(window).trigger('resize'); } };" +
+                    "var h = document.querySelector('header.pageHeader') || document.querySelector('header');" +
+                    "if (h && window.ResizeObserver && window.__suproHeader !== h) {" +
+                    "  if (window.__suproHeaderObserver) { window.__suproHeaderObserver.disconnect(); }" +
+                    "  window.__suproHeader = h;" +
+                    "  window.__suproHeaderObserver = new ResizeObserver(relayout);" +
+                    "  window.__suproHeaderObserver.observe(h);" +
+                    "}" +
+                    "setTimeout(relayout, 50);" +
                     "})();";
 
     // Читает со страницы заголовок, пользователя и меню разделов
@@ -134,6 +161,25 @@ public class MainActivity extends BridgeActivity {
     // Адреса страниц, уже привязанных к разделам меню
     private final Map<String, String> sectionAliases = new HashMap<>();
 
+
+    // Экран настроек: возвращает действие, которое нужно выполнить в основном окне
+    private final androidx.activity.result.ActivityResultLauncher<Intent> settingsLauncher =
+            registerForActivityResult(
+                    new androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+                    result -> {
+                        if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
+                        String action = result.getData().getStringExtra(SettingsActivity.EXTRA_ACTION);
+                        if (SettingsActivity.ACTION_LOGOUT.equals(action)) {
+                            logout();
+                        } else if (SettingsActivity.ACTION_OPEN_URL.equals(action)) {
+                            String url = result.getData().getStringExtra(SettingsActivity.EXTRA_URL);
+                            if (url != null) {
+                                stickySectionHref = null;
+                                getBridge().getWebView().loadUrl(url);
+                            }
+                        }
+                    });
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -145,6 +191,12 @@ public class MainActivity extends BridgeActivity {
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
+
+        // Прячем шапку сайта ещё до того, как страница начнёт отрисовываться
+        if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            androidx.webkit.WebViewCompat.addDocumentStartJavaScript(
+                    webView, EARLY_HIDE_JS, java.util.Collections.singleton(SITE_URL));
+        }
 
         // Верхняя панель и боковое меню вокруг WebView
         setupAppChrome();
@@ -566,6 +618,11 @@ public class MainActivity extends BridgeActivity {
         drawerPanel.addView(divider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, (int) d)));
 
+        drawerPanel.addView(createDrawerRow("Настройки", null, v -> {
+            drawerLayout.closeDrawer(GravityCompat.START);
+            settingsLauncher.launch(new Intent(this, SettingsActivity.class));
+        }));
+
         drawerPanel.addView(createDrawerRow("Настройка профиля", null, v -> {
             drawerLayout.closeDrawer(GravityCompat.START);
             stickySectionHref = null;
@@ -662,9 +719,13 @@ public class MainActivity extends BridgeActivity {
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                             .remove(PREF_DRAWER_MENU).apply();
                     setMenuAvailable(false);
-                } else {
+                } else if (allowRetry) {
                     // Меню на странице не нашлось — возможно, сайт дорисует его позже
                     needRetry = true;
+                } else if (drawerItemHrefs.isEmpty()) {
+                    // Меню так и не прочиталось, а запомненного нет — возвращаем родную навигацию сайта
+                    getBridge().getWebView().evaluateJavascript(
+                            "document.documentElement.classList.add('supro-site-nav');", null);
                 }
             }
 
@@ -817,13 +878,15 @@ public class MainActivity extends BridgeActivity {
     private void confirmLogout() {
         new AlertDialog.Builder(this)
                 .setTitle("Выйти из аккаунта?")
-                .setPositiveButton("Выйти", (dialogInterface, which) -> {
-                    stickySectionHref = null;
-                    sectionAliases.clear();
-                    getBridge().getWebView().loadUrl(SITE_URL + "/auth/logout/");
-                })
+                .setPositiveButton("Выйти", (dialogInterface, which) -> logout())
                 .setNegativeButton("Отмена", null)
                 .show();
+    }
+
+    private void logout() {
+        stickySectionHref = null;
+        sectionAliases.clear();
+        getBridge().getWebView().loadUrl(SITE_URL + "/auth/logout/");
     }
 
     // ===================== Экран ошибки загрузки =====================
